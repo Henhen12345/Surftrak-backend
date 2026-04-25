@@ -166,8 +166,83 @@ All constants live in `config.py`. No logic code needs to change to tune the pip
 | `MOG2_VAR_THRESHOLD` | Background subtractor sensitivity (lower = more sensitive) | Too many false motion blobs → increase; missing surfer in flat light → decrease |
 | `MOG2_HISTORY` | Background model learning window (frames) | Slow-moving camera → increase; fast scene changes → decrease |
 | `MEDIAPIPE_MIN_DETECTION_CONFIDENCE` | Minimum pose confidence to count as a detection | Too many false locks → increase; losing surfer in poor visibility → decrease |
-| `MIDLINE_SCORE_WEIGHT` | How much to weight UWB proximity vs pose confidence in candidate scoring | Noisy UWB → decrease towards 0.4; reliable UWB → increase towards 0.8 |
-| `DETECTION_FALLBACK_HOLD_FRAMES` | Frames to coast on last known position before releasing lock | Short wipeouts → increase; avoid locking onto static objects → decrease |
+
+### Surfer-Specific Filters
+
+These constants form the cascade that separates active surfers from spectators,
+photographers, and bystanders. Tune them in order — each narrows the candidate
+pool before the next filter runs.
+
+#### `WATER_ZONE_TOP_FRACTION` ← **Most important tuning knob**
+
+Controls which vertical slice of the frame is searched for surfers. Detections
+whose centre is above this line are unconditionally discarded — they are beach,
+rocks, or sky, never in-water surfers.
+
+| Spot type | Recommended value |
+|---|---|
+| Beach break (Trestles, Newport) — surfers are far out | `0.35–0.40` |
+| Shore break / wedge — surfers are very close | `0.20–0.30` |
+| Point break with cliff background | `0.30–0.35` |
+
+**Increase** if the camera locks onto spectators on the sand. **Decrease** if the
+surfer's head is being clipped at the top of the water zone on close waves.
+
+#### `MIN_SUBJECT_HEIGHT_FRACTION` / `MAX_SUBJECT_HEIGHT_FRACTION`
+
+Reject candidates that are too small (distant noise, sea spray) or too large
+(spectators standing close to the camera). At typical SurfTrak distances (15–80 ft)
+a surfer occupies 4–35% of the 1080px frame height (43–378 px).
+
+| Constant | Default | Increase when | Decrease when |
+|---|---|---|---|
+| `MIN_SUBJECT_HEIGHT_FRACTION` | `0.04` | Sea spray or whitewash triggering false detections | Very distant surfers getting rejected |
+| `MAX_SUBJECT_HEIGHT_FRACTION` | `0.35` | Locked on a close bystander who is very tall in frame | Long-lens setup where even close surfers appear small |
+
+#### `MIN_LATERAL_VELOCITY_PX_PER_FRAME`
+
+Minimum horizontal speed (px/frame) a candidate must sustain to qualify as an
+active surfer. Stationary spectators and paddling-only surfers fail this test.
+
+Default `1.8 px/frame` (≈ 54 px/sec at 30fps). At typical wave speeds this
+corresponds to roughly 1.5–2 mph of apparent lateral motion in frame.
+
+- **Increase** if the system locks onto idle surfers sitting in the lineup.
+- **Decrease** if slow nose-riders or small-wave surfers are being rejected.
+
+Note: the velocity filter is **bypassed** for the currently-locked subject. This
+preserves the lock through wipeouts and kick-outs where the surfer briefly stops.
+
+#### `LOCK_CONFIRMATION_FRAMES`
+
+Number of consecutive qualifying frames required before a new lock is committed.
+During confirmation the output is `None` (CropEngine coasts on last position).
+
+Default `8` frames (≈ 0.27 sec at 30fps). This is the intentional false-lock
+prevention delay — better to miss the first quarter-second of a wave than to
+commit to the wrong person.
+
+- **Increase** (up to ~15) at busy breaks with many surfers to reduce false locks.
+- **Decrease** (down to ~4) at uncrowded spots where false positives are rare
+  and you want faster lock-on at the start of each wave.
+
+#### `LOCK_BREAK_FRAMES`
+
+Frames of consecutive non-detection before the lock is released and the system
+returns to searching. During this window the last known bbox is returned (coast).
+
+Default `45` frames (1.5 sec at 30fps). This covers most wipeouts and the brief
+submersion during a tube.
+
+- **Increase** if the lock is breaking during long wipeouts or deep tubes.
+- **Decrease** if the camera sticks on a wipeout and misses the next surfer.
+
+#### `VELOCITY_HISTORY_FRAMES`
+
+Sliding window length used to compute each candidate's rolling lateral velocity.
+Longer windows smooth over brief stalls; shorter windows react faster to direction changes.
+
+Default `12` frames. Rarely needs adjustment.
 
 ### Kalman Filter
 
